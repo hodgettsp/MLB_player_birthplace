@@ -1,0 +1,1023 @@
+---
+title: "Baseball Player Birth City Map"
+author: "Paul A. Hodgetts"
+date: "17/09/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r packages, echo = FALSE, warning = FALSE, message = FALSE}
+#install.packages("Lahman")       ## uncomment to install Lahman baseball data package
+#install.packages("tidyverse")    ## uncomment to install tidyverse package for working with data
+#install.packages("here")         ## uncomment to install here package for working with directories
+#install.packages("sf")           ## uncomment to install sf package for working with spatial coordinates
+#install.packages("tmap")         ## uncomment to install tmap package for mapping
+#install.packages("spData")       ## uncomment to install spData for World map (and other maps)
+```
+
+
+```{r libraries, echo = FALSE, warning = FALSE, message = FALSE}
+library(Lahman)                 ## load Lahman library
+library(tidyverse)              ## load tidyverse library
+library(here)                   ## improves efficiency of working with directories
+library(sf)                     ## assists in working with geo data
+library(tmap)                   ## for building maps
+library(spData)                 ## provides World map
+```
+
+
+```{r load world city data, echo = FALSE, message = FALSE, warning = FALSE}
+# world_cities <- read_csv(here("data/world cities/worldcities.csv"))                          
+ 
+cities <- read.csv(here("data/world cities/world-cities.csv"), sep = ";")  ## read in world city data from csv file
+head(cities)            ## check data columns
+```
+
+
+```{r load region data, echo = FALSE, message = FALSE}
+regions <- read.table(here("data/world cities/regioncodes.txt"), header = TRUE, sep = ",")  ## read in region data from .txt file
+head(regions)           ## check data columns
+```
+
+
+```{r load country code data, echo = FALSE, message = FALSE, warning = FALSE}
+countries <- read_csv(here("data/world cities/wikipedia-iso-country-codes.csv"))   ## read in country data from csv file. Using read_csv as opposed to read.csv as the file does not need to define the separator and read_csv is a faster function
+head(countries)         ## check data columns
+```
+
+
+```{r build world cities dataset, echo = FALSE, message = FALSE}
+cities_wrk1<- cities %>%     ## assign cities to working data to protect original dataset
+  rename(iso2 = Country)     ## rename Country column to iso2 for joining later
+
+regions_wrk1 <- regions %>%       ## assign regions to working data to protect original dataset
+  mutate(iso2 = tolower(iso2))    ## mutate values in iso2 to lowercase for joining later
+
+regions_iso2 <- regions_wrk1 %>%  ## create dataset of only the iso2 codes in the region dataset
+  select(iso2) %>%              
+  unique()
+
+cities_iso2 <- cities_wrk1 %>%    ## create dataset of only the iso2 codes in the cities dataset
+  select(iso2) %>% 
+  unique
+
+regions_miss_1 <- anti_join(cities_iso2, regions_iso2)  ## check for iso codes in cities dataset and not in regions
+
+regions_miss_2 <- anti_join(regions_iso2, cities_iso2)  ## check for iso codes in regions dataset and not in cities
+
+countries_wrk1 <- countries %>%     ## assign countries data to working dataframe rename columns for later joining
+                                    ## mutate values to lowercase
+  rename(country = `English short name lower case`, iso2 = `Alpha-2 code`, iso3 = `Alpha-3 code`, numeric = `Numeric code`, iso3166 = `ISO 3166-2`) %>% 
+  mutate_all(tolower)
+
+## create new dataset of only country names and the associated iso2 codes
+countries_names <- countries_wrk1 %>% 
+  select(country, iso2)
+
+## see which values are in countries and not in cities
+country_city_mismatch <- anti_join(countries_names, cities_iso2, by = "iso2")
+
+## see which values are in cities and not in countries, should match NAs
+city_country_mismatch <- anti_join(cities_iso2, countries_names, by = "iso2")
+```
+
+```{r clean cities and countries, echo = FALSE, message = FALSE, warning = FALSE}
+cities_wrk1 <- cities_wrk1 %>% 
+  mutate(iso2 = case_when(iso2 == "us" & Region == "PR" ~ "pr",
+                          iso2 == "us" & Region == "AS" ~ "as",
+                          iso2 == "us" & Region == "GU" ~ "gu",
+                          iso2 == "fi" & Region == "01" ~ "ax",
+                          TRUE ~ as.character(iso2)))
+
+cities_wrk2 <- left_join(cities_wrk1, countries_wrk1, by = "iso2") ## create new working dataset with added country data
+```
+
+```{r check NA function, echo = FALSE, message = FALSE, warning = FALSE}
+
+## I found I was writing this code often to check where NA values were in the created datasets.
+## it works such that it takes a dataset and a variable name to be created as a character string
+## assigns the given character string as a variable that contains which values in the given data are NA
+## then it converts the given character string, and subsequentlt the new variable, to a dataframe
+## it then selects for only the 'col' column in that dataset and removes duplicate values
+check_NA <- function(.data, .var){
+  assign(.var, which(is.na(.data), arr.ind = TRUE), envir = .GlobalEnv)
+  assign(.var, as.data.frame(get(.var)), envir = .GlobalEnv)
+  assign(.var, dplyr::select(get(.var), col), envir = .GlobalEnv)
+  assign(.var, unique(get(.var)), envi = .GlobalEnv)
+}
+
+filter_NA <- function(.data, ..., column){
+  .data %>% 
+    filter(is.na(.data[[column]])) %>% 
+    select(...) %>% 
+    unique()
+}
+```
+
+
+```{r check NA, echo = FALSE, message = FALSE, warning = FALSE}
+
+## use the check_NA function, created above, to create a dataset that states which columns have NA values
+check_NA(cities_wrk2, "NA_countries")
+
+## use the filer_NA function to filter for only the NA values using the columns found in the previous function
+check_NA_countries <- filter_NA(cities_wrk2, "country", "iso2", column = "country")
+
+z <- c("zaire", "zr", "zar", "180", "iso 3166-2:zr") ## create vector for Zaire data
+countries_wrk1 <- rbind(countries_wrk1, z)                 ## bind Zaire data to countries dataset
+
+countries_wrk1 <- countries_wrk1 %>% 
+  mutate(iso2 = case_when(country == "namibia" ~ "na",   ## add in  Namibia information to countries dataset
+                          TRUE ~ as.character(iso2)))
+
+cities_wrk2 <- left_join(cities_wrk1, countries_wrk1, by = "iso2") %>%       ## recreate working cities dataset with missing data
+  rename(city = City, region_code = Region, lat = Latitude, lng = Longitude)
+
+## double-check that NA values have been resolved
+check_NA_countries <- filter_NA(cities_wrk2, "country", "iso2", column = "country")
+
+cities_wrk3 <- left_join(cities_wrk2, regions_wrk1, by = c("iso2", "region_code"))  ## join region data to working city dataset
+
+## use the filter_NA function to filter for only the NA values in the admin_name column in the newly joined dataset
+check_NA_admin <- filter_NA(cities_wrk3, "iso2", "region_code", "country", "admin_name", column = "admin_name")
+
+## adjust region data in cities dataset to fix NA values when joining with regions dataset.
+## not all regions are adjusted as data may not have been available to confirm values.
+
+## most missing region values are due to the location being an island nation or an island region
+## additionally, some missing values are due to the place names not being updated for redrawn region borders
+## it may be that the numbers used to designate regions in the cities dataset are just inaccurate from the
+## numbers used in the regions dataset.
+## the following code fixes region issues for Bosnia i Herzegovina, Canada, and Puerto Rico.
+## these are the countries with which there was a mis-match between region codes.
+
+cities_wrk2 <- cities_wrk2 %>% 
+  mutate(region_code = case_when(iso2 == "ba" & region_code == "BD" ~ "03",
+                            iso2 == "ca" & region_code == "01" ~ "AB",
+                            iso2 == "ca" & region_code == "02" ~ "BC",
+                            iso2 == "ca" & region_code == "03" ~ "MB",
+                            iso2 == "ca" & region_code == "04" ~ "NB",
+                            iso2 == "ca" & region_code == "05" ~ "NL",
+                            iso2 == "ca" & region_code == "07" ~ "NS",
+                            iso2 == "ca" & region_code == "08" ~ "ON",
+                            iso2 == "ca" & region_code == "09" ~ "PE",
+                            iso2 == "ca" & region_code == "10" ~ "QC",
+                            iso2 == "ca" & region_code == "11" ~ "SK",
+                            iso2 == "ca" & region_code == "12" ~ "YT",
+                            iso2 == "ca" & region_code == "13" ~ "NT",
+                            iso2 == "ca" & region_code == "14" ~ "NU",
+                            TRUE ~ as.character(region_code)))
+
+## adjust regions dataset to fix NA values when joining with cities dataset
+pr <- c("pr", "PR", "Puerto Rico")
+regions_wrk1 <- rbind(regions_wrk1, pr)
+
+gu <- c("gu", "GU", "Guam")
+regions_wrk1 <- rbind(regions_wrk1, gu)
+
+## this recreates the complete dataset with the adjusted region values.
+cities_wrk3 <- left_join(cities_wrk2, regions_wrk1, by = c("iso2", "region_code"))
+
+## double-check NA values in newly created dataset
+check_NA_admin <- filter_NA(cities_wrk3, "iso2", "region_code", "country", "admin_name", column = "admin_name")
+```
+
+
+```{r player data, echo = FALSE, message = FALSE, warning = FALSE}
+players <- People              ## load player data from Lahman package
+players_working <- players     ## create working dataset
+
+head(players_working)          ## check dataset column heads
+```
+
+
+```{r player birth data, echo = FALSE, message = FALSE, warning = FALSE}
+players_birthcity <- players_working %>%                    ## assign working dataset to new variable for working with only birth city data
+  filter(birthCity != "NA") %>%                             ## filter for only non-NA results
+  select(birthCountry, birthCity, birthState)               ## select birthCountry, birthCity, and birthState columns
+```
+
+
+```{r rename countries, echo = FALSE, message = FALSE, warning = FALSE}
+## get dataset of unique countries in player data
+player_countries <- players_birthcity %>%       ## assign new data variable for player birth countries
+  select(birthCountry) %>%                      ## select only birthCountry column 
+  unique() %>%                                  ## keep only unique values
+  rename(country = birthCountry) %>%            ## rename birthCountry to country for simplicity
+  mutate_all(tolower)                           ## change values to lowercase
+
+## create a dataset of only the country names from the countries dataset
+country_names <- countries_wrk1 %>% 
+  select(country)
+
+## create a dataset of country names that appear in player_countries and not in countries_wrk1
+player_countries_mismatch <- anti_join(player_countries, country_names, by = "country")
+
+## rename countries is player data that do not match countries in world cities data
+players_birthcity <- players_birthcity %>% 
+  mutate(birthCountry = case_when(birthCountry == "USA" ~ "United States of America",
+                                  birthCountry == "D.R." ~ "Dominican Republic",
+                                  birthCountry == "CAN" ~ "Canada",
+                                  birthCountry == "P.R." ~ "Puerto Rico",
+                                  birthCountry == "Curacao" ~ "Netherlands Antilles",
+                                  birthCountry == "South Korea" ~ "Korea, Republic of (South Korea)",
+                                  birthCountry == "Viet Nam" ~ "Vietnam",
+                                  birthCountry == "V.I." ~ "United States of America",
+                                  TRUE ~ as.character(birthCountry))) %>% 
+  rename(country = birthCountry, city = birthCity, admin_name = birthState)
+
+player_countries <- players_birthcity %>% 
+  select(country) %>% 
+  mutate_all(tolower) %>% 
+  unique()
+
+player_countries_mismatch <- anti_join(player_countries, country_names, by = "country")
+```
+
+
+```{r rename admin names, echo = FALSE, message = FALSE, warning = FALSE}
+players_df <- players_birthcity %>% 
+  mutate(country = tolower(country),
+         city = tolower(city))
+
+cities_df <- cities_wrk3 %>% 
+  select(country, city, iso2, lat, lng, admin_name) %>% 
+  mutate(admin_name = case_when(country == "united states of america" & admin_name == "Alabama" ~ "AL",
+                                country == "united states of america" & admin_name == "Alaska" ~ "AK",
+                                country == "united states of america" & admin_name == "Arizona" ~ "AZ",
+                                country == "united states of america" & admin_name == "Arkansas" ~ "AR",
+                                country == "united states of america" & admin_name == "California" ~ "CA",
+                                country == "united states of america" & admin_name == "Colorado" ~ "CO",
+                                country == "united states of america" & admin_name == "Connecticut" ~ "CT",
+                                country == "united states of america" & admin_name == "Delaware" ~ "DE",
+                                country == "united states of america" & admin_name == "District of Columbia" ~ "DC",
+                                country == "united states of america" & admin_name == "Florida" ~ "FL",
+                                country == "united states of america" & admin_name == "Georgia" ~ "GA",
+                                country == "united states of america" & admin_name == "Hawaii" ~ "HI",
+                                country == "united states of america" & admin_name == "Idaho" ~ "ID",
+                                country == "united states of america" & admin_name == "Illinois" ~ "IL",
+                                country == "united states of america" & admin_name == "Indiana" ~ "IN",
+                                country == "united states of america" & admin_name == "Iowa" ~ "IA",
+                                country == "united states of america" & admin_name == "Kansas" ~ "KS",
+                                country == "united states of america" & admin_name == "Kentucky" ~ "KY",
+                                country == "united states of america" & admin_name == "Louisiana" ~ "LA",
+                                country == "united states of america" & admin_name == "Maine" ~ "ME",
+                                country == "united states of america" & admin_name == "Maryland" ~ "MD",
+                                country == "united states of america" & admin_name == "Massachusetts" ~ "MA",
+                                country == "united states of america" & admin_name == "Michigan" ~ "MI",
+                                country == "united states of america" & admin_name == "Minnesota" ~ "MN",
+                                country == "united states of america" & admin_name == "Mississippi" ~ "MS",
+                                country == "united states of america" & admin_name == "Missouri" ~ "MO",
+                                country == "united states of america" & admin_name == "Montana" ~ "MT",
+                                country == "united states of america" & admin_name == "Nebraska" ~ "NE",
+                                country == "united states of america" & admin_name == "Nevada" ~ "NV",
+                                country == "united states of america" & admin_name == "New Hampshire" ~ "NH",
+                                country == "united states of america" & admin_name == "New Jersey" ~ "NJ",
+                                country == "united states of america" & admin_name == "New Mexico" ~ "NM",
+                                country == "united states of america" & admin_name == "New York" ~ "NY",
+                                country == "united states of america" & admin_name == "North Carolina" ~ "NC",
+                                country == "united states of america" & admin_name == "North Dakota" ~ "ND",
+                                country == "united states of america" & admin_name == "Ohio" ~ "OH",
+                                country == "united states of america" & admin_name == "Oklahoma" ~ "OK",
+                                country == "united states of america" & admin_name == "Oregon" ~ "OR",
+                                country == "united states of america" & admin_name == "Pennsylvania" ~ "PA",
+                                country == "united states of america" & admin_name == "Rhode Island" ~ "RI",
+                                country == "united states of america" & admin_name == "South Carolina" ~ "SC",
+                                country == "united states of america" & admin_name == "South Dakota" ~ "SD",
+                                country == "united states of america" & admin_name == "Tennessee" ~ "TN",
+                                country == "united states of america" & admin_name == "Texas" ~ "TX",
+                                country == "united states of america" & admin_name == "Utah" ~ "UT",
+                                country == "united states of america" & admin_name == "Vermont" ~ "VT",
+                                country == "united states of america" & admin_name == "Virginia" ~ "VA",
+                                country == "united states of america" & admin_name == "Washington" ~ "WA",
+                                country == "united states of america" & admin_name == "West Virginia" ~ "WV",
+                                country == "united states of america" & admin_name == "Wisconsin" ~ "WI",
+                                country == "united states of america" & admin_name == "Wyoming" ~ "WY",
+                                country == "canada" & admin_name == "Alberta" ~ "AB",
+                                country == "canada" & admin_name == "British Columbia" ~ "BC",
+                                country == "canada" & admin_name == "Manitoba" ~ "MB",
+                                country == "canada" & admin_name == "New Brunswick" ~ "NB",
+                                country == "canada" & admin_name == "Newfoundland and Labrador" ~ "NL",
+                                country == "canada" & admin_name == "Northwest Territories" ~ "NT",
+                                country == "canada" & admin_name == "Nova Scotia" ~ "NS",
+                                country == "canada" & admin_name == "Nunavut" ~ "NU",
+                                country == "canada" & admin_name == "Ontario" ~ "ON",
+                                country == "canada" & admin_name == "Prince Edward Island" ~ "PE",
+                                country == "canada" & admin_name == "Quebec" ~ "QC",
+                                country == "canada" & admin_name == "Saskatchewan" ~ "SK",
+                                country == "canada" & admin_name == "Yukon" ~ "YT",
+                                TRUE ~ as.character(admin_name)),
+         country = case_when(country == "czech republic" ~ "czechia",
+                             TRUE ~ as.character(country)))
+
+player_cities <- left_join(players_df, cities_df, by = c("city", "country", "admin_name"))
+
+lat_NA <- filter_NA(player_cities, "country", "city", "admin_name", column = "lat")
+```
+
+
+```{r clean players df, echo = FALSE, message = FALSE, warning = FALSE}
+
+## change how the word 'saint' is represented in the players dataframe
+players_df$city <- gsub("st.\\s", "saint ", players_df$city)
+cities_df$city <- gsub("st.\\s", "saint ", cities_df$city)
+
+
+## remove '-' from between city names
+cities_df$city <- gsub("-", " ", cities_df$city)
+players_df$city <- gsub("-", " ", players_df$city)
+
+
+## create new player cities dataset
+player_cities <- left_join(players_df, cities_df, by = c("city", "country", "admin_name"))
+
+## check for NA values
+lat_NA <- filter_NA(player_cities, "country", "city", "admin_name", column = "lat")
+
+## mutate city name and admin name values to fix NA values
+players_df <- players_df %>% 
+  mutate(city = case_when(country == "american samoa" & city == "nuuuli" & is.na(admin_name) ~ "nu'uuli",
+                          country == "canada" & city == "east york" & admin_name == "ON" ~ "toronto",
+                          country == "canada" & city == "adolphustown" & admin_name == "ON" ~ "napanee",
+                          country == "canada" & city == "north gower" & admin_name == "ON" ~ "ottawa",
+                          country == "canada" & city == "ste. anne de bellevue" & admin_name == "QC" ~ "sainte anne de bellevue",
+                          country == "cuba" & city == "los abreus" & is.na(admin_name) ~ "abreus",
+                          country == "cuba" & city == "central preston" & is.na(admin_name) ~ "guatemala",
+                          country == "cuba" & city == "central cunagua" & is.na(admin_name) ~ "cunagua",
+                          country == "cuba" & city == "central tinguaro" & admin_name == "Matanzas" ~ "tinguaro",
+                          country == "cuba" & city == "villa clara" & is.na(admin_name) ~ "santa clara",
+                          country == "cuba" & city == "isla de la juventud" & is.na(admin_name) ~ "nueva gerona",
+                          country == "cuba" & city == "villa clara" & admin_name == "Villa Clara" ~ "santa clara",
+                          country == "cuba" & city == "central alava" & is.na(admin_name) ~ "progreso de alava",
+                          country == "dominican republic" & city == "sanchez ramirez" & admin_name == "Sanchez Ramirez" ~ "colonia juan sanchez ramirez",
+                          country == "dominican republic" & city == "santo domingo centro" ~ "santo domingo",
+                          country == "dominican republic" & city == "santo domingo este" ~ "santo domingo",
+                          country == "dominican republic" & city == "don gregorio de nizao" ~ "don gregorio",
+                          country == "finland" & city == "tivalkoski" ~ "taivalkoski",
+                          country == "france" & city == "landes de bussac" ~ "bussac",
+                          country == "germany" & city == "schoerndorn" ~ "schorndorf",
+                          country == "guam" & city == "agana heights" ~ "hagatna heights",
+                          country == "indonesia" & city == "east bontang" ~ "bontang",
+                          country == "ireland" & city == "cahirciveen" ~ "cahersiveen",
+                          country == "ireland" & city == "maam" ~ "maam cross",
+                          country == "ireland" & city == "capperwhite" ~ "cappagh white",
+                          country == "ireland" & city == "rathroe" ~ "rathroeen",
+                          country == "italy" & city == "sanremo" ~ "san remo",
+                          country == "japan" & city == "naha" ~ "naha shi",
+                          country == "japan" & city == "kochi" ~ "kochi shi",
+                          country == "japan" & city == "so gun" ~ "dosaki",
+                          country == "japan" & city == "naha afb" ~ "naha shi",
+                          country == "japan" & city == "chiba" ~ "chiba shi",
+                          country == "japan" & city == "hirara" ~ "miyakojima",
+                          country == "japan" & city == "higashi yamato" ~ "higashiyamato",
+                          country == "japan" & city == "tokushima" ~ "tokushima shi",
+                          country == "japan" & city == "aira gun" ~ "aira",
+                          country == "japan" & city == "morioka" ~ "morioka shi",
+                          country == "japan" & city == "osaka" ~ "osaka shi",
+                          country == "japan" & city == "senboku gun" ~ "tadaoka",
+                          country == "japan" & city == "kita tsuru gun" ~ "otsuki",
+                          country == "japan" & city == "nara" ~ "nara shi",
+                          country == "japan" & city == "kyoto" ~ "kyoto shi",
+                          country == "japan" & city == "sendai" ~ "sendai shi",
+                          country == "japan" & city == "nichi kasugai gun" ~ "kasugai",
+                          country == "japan" & city == "yokohama" ~ "yokohama shi",
+                          country == "japan" & city == "chikushino" ~ "fukuoka shi",
+                          country == "japan" & city == "minami muro gun" ~ "mihama",
+                          country == "japan" & city == "arita gun" ~ "arida",
+                          country == "korea, republic of (south korea)" & city == "hwasun" ~ "yongam",
+                          country == "korea, republic of (south korea)" & city == "choon chung do" ~ "seoul",
+                          country == "mexico" & city == "sonora" & admin_name == "Sonora" ~ "ciudad obregon",
+                          country == "mexico" & city == "estacion lagunas" & admin_name == "Oaxaca" ~ "oaxaca de juarez",
+                          country == "mexico" & city == "juan jose rios" & admin_name == "Sinaloa" ~ "colonia juan jose rios",
+                          country == "netherlands antilles" & city == "brevengat" ~ "brievengat",
+                          country == "nicaragua" & city == "pearl lagoon" ~ "english bank",
+                          country == "norway" & city == "modum" ~ "aamot modum",
+                          country == "panama" & city == "cabecera" & admin_name == "Chiriqui" ~ "cabecera corrales",
+                          country == "panama" & city == "bethania" ~ "panama city",
+                          country == "puerto rico" & city == "hato rey" ~ "san juan",
+                          country == "puerto rico" & city == "loiza aldea" ~ "loiza",
+                          country == "puerto rico" & city == "toabaja" ~ "toa baja",
+                          country == "puerto rico" & city == "isabella" ~ "isabela",
+                          country == "poland" & city == "garlin" ~ "garlino",
+                          country == "russia" & city == "leningrad" ~ "saint petersburg",
+                          country == "russia" & city == "neu norka" ~ "ney norka",
+                          country == "taiwan" & city == "tainan city" ~ "tainan",
+                          country == "taiwan" & city == "kaohsiung city" ~ "kaohsiung",
+                          country == "taiwan" & city == "peng hu county" ~ "penghu",
+                          country == "taiwan" & city == "hwa lian" ~ "hualien",
+                          country == "taiwan" & city == "kaohsiung county" ~ "kaohsiung",
+                          country == "taiwan" & city == "pingtung county" ~ "pingtung",
+                          country == "taiwan" & city == "taitung city" ~ "taitung",
+                          country == "united kingdom" & city == "salford" ~ "city and borough of salford",
+                          country == "united kingdom" & city == "kinsley" ~ "wakefield",
+                          country == "united states of america" & city == "essex" & admin_name == "VT" ~ "essex junction",
+                          country == "united states of america" & city == "deland" & admin_name == "FL" ~ "de land",
+                          country == "united states of america" & city == "mililani" & admin_name == "HI" ~ "mililani town",
+                          country == "united states of america" & city == "carmel" & admin_name == "CA" ~ "carmel by the sea",
+                          country == "united states of america" & city == "calahan" & admin_name == "NC" ~ "winston salem",
+                          country == "united states of america" & city == "elmhurst" & admin_name == "CA" ~ "sacramento",
+                          country == "united states of america" & city == "liverpool" & admin_name == "OH" ~ "east liverpool",
+                          country == "united states of america" & city == "snake creek" & admin_name == "VA" ~ "laurel fork",
+                          country == "united states of america" & city == "tunstall station" & admin_name == "VA" ~ "tunstall",
+                          country == "united states of america" & city == "gilreath mill" & admin_name == "SC" ~ "greer",
+                          country == "united states of america" & city == "harford county" & admin_name == "MD" ~ "bel air",
+                          country == "united states of america" & city == "mount morgan" & admin_name == "KY" ~ "williamsburg",
+                          country == "united states of america" & city == "west hills" & admin_name == "CA" ~ "los angeles",
+                          country == "united states of america" & city == "new town" & admin_name == "NY" ~ "newtown",
+                          country == "united states of america" & city == "lost creek" & admin_name == "IN" ~ "seelyville",
+                          country == "united states of america" & city == "charleston" & admin_name == "MD" ~ "charleston creek",
+                          country == "united states of america" & city == "fort sill" & admin_name == "OK" ~ "lawton",
+                          country == "united states of america" & city == "crow wing county" & admin_name == "MN" ~ "brainerd",
+                          country == "united states of america" & city == "cornwall" & admin_name == "IL" ~ "atkinson",
+                          country == "united states of america" & city == "lasalle" & admin_name == "IL" ~ "la salle",
+                          country == "united states of america" & city == "neptune" & admin_name == "NJ" ~ "neptune city",
+                          country == "united states of america" & city == "pleasant village" & admin_name == "PA" ~ "mount pleasant",
+                          country == "united states of america" & city == "maryvale" & admin_name == "IL" ~ "maryville",
+                          country == "united states of america" & city == "greenhill" & admin_name == "IN" ~ "green hill",
+                          country == "united states of america" & city == "la porte" & admin_name == "IN" ~ "laporte",
+                          country == "united states of america" & city == "saint clair" & admin_name == "IL" ~ "belleville",
+                          country == "united states of america" & city == "brady's bend" & admin_name == "PA" ~ "bradys bend",
+                          country == "united states of america" & city == "ro ellen" & admin_name == "TN" ~ "roellen",
+                          country == "united states of america" & city == "lewiston" & admin_name == "PA" ~ "lewistown",
+                          country == "united states of america" & city == "spangler" & admin_name == "PA" ~ "northern cambria",
+                          country == "united states of america" & city == "glen dale" & admin_name == "WV" ~ "glendale",
+                          country == "united states of america" & city == "south manchester" & admin_name == "CT" ~ "manchester",
+                          country == "united states of america" & city == "cartharpin" & admin_name == "VA" ~ "catharpin",
+                          country == "united states of america" & city == "blackash" & admin_name == "PA" ~ "black ash",
+                          country == "united states of america" & city == "clinton county" & admin_name == "PA" ~ "lock haven",
+                          country == "united states of america" & city == "camden county" & admin_name == "NJ" ~ "camden",
+                          country == "united states of america" & city == "lower merion" & admin_name == "PA" ~ "merion hills",
+                          country == "united states of america" & city == "blenheim" & admin_name == "NY" ~ "north blenheim",
+                          country == "united states of america" & city == "lordsburg" & admin_name == "CA" ~ "la verne",
+                          country == "united states of america" & city == "groton" & admin_name == "OH" ~ "sandusky",
+                          country == "united states of america" & city == "dekalb county" & admin_name == "IL" ~ "decatur",
+                          country == "united states of america" & city == "carbon county" & admin_name == "PA" ~ "lehighton",
+                          country == "united states of america" & city == "bayview" & admin_name == "MD" ~ "bayview manor mobile home park",
+                          country == "united states of america" & city == "ehime" & admin_name == "MN" ~ "brainerd",
+                          country == "united states of america" & city == "fort riley" & admin_name == "KS" ~ "manhattan",
+                          country == "united states of america" & city == "corydon township" & admin_name == "PA" ~ "smethport",
+                          country == "united states of america" & city == "allegheny county" & admin_name == "PA" ~ "pittsburgh",
+                          country == "united states of america" & city == "camp lejeune" & admin_name == "NC" ~ "jacksonville",
+                          country == "united states of america" & city == "erath county" & admin_name == "TX" ~ "stephenville",
+                          country == "united states of america" & city == "clay grove" & admin_name == "IA" ~ "fort madison",
+                          country == "united states of america" & city == "clay grove" & admin_name == "IA" ~ "fort madison",
+                          country == "united states of america" & city == "smith's landing" & admin_name == "OH" ~ "batavia",
+                          country == "united states of america" & city == "mecklenberg" & admin_name == "NC" ~ "charlotte",
+                          country == "united states of america" & city == "milton" & admin_name == "GA" ~ "atlanta",
+                          country == "united states of america" & city == "calvert county" & admin_name == "MD" ~ "prince frederick",
+                          country == "united states of america" & city == "mecklenburg county" & admin_name == "NC" ~ "charlotte",
+                          country == "united states of america" & city == "springwells" & admin_name == "MI" ~ "detroit",
+                          country == "united states of america" & city == "evergreen" & admin_name == "IL" ~ "evergreen park",
+                          country == "united states of america" & city == "east windsor" & admin_name == "CT" ~ "east windsor hill",
+                          country == "united states of america" & city == "mccandless" & admin_name == "PA" ~ "pittsburgh",
+                          country == "united states of america" & city == "lincoln county" & admin_name == "NC" ~ "lincolnton",
+                          country == "united states of america" & city == "narrows" & admin_name == "GA" ~ "baldwin",
+                          country == "united states of america" & city == "lee's summit" & admin_name == "MO" ~ "lees summit",
+                          country == "united states of america" & city == "fort campbell" & admin_name == "KY" ~ "oak grove",
+                          country == "united states of america" & city == "witt" & admin_name == "TX" ~ "weatherford",
+                          country == "united states of america" & city == "lihue kauai" & admin_name == "HI" ~ "lihue",
+                          country == "united states of america" & city == "dundee" & admin_name == "IL" ~ "west dundee",
+                          country == "united states of america" & city == "walpole" & admin_name == "IN" ~ "fortville",
+                          country == "united states of america" & city == "saybrook" & admin_name == "CT" ~ "old saybrook",
+                          country == "united states of america" & city == "fuquay springs" & admin_name == "NC" ~ "fuquay varina",
+                          country == "united states of america" & city == "hall's station" & admin_name == "GA" ~ "halls crossing",
+                          country == "united states of america" & city == "beaver lake" & admin_name == "MI" ~ "west branch",
+                          country == "united states of america" & city == "gloucester" & admin_name == "NJ" ~ "gloucester city",
+                          country == "united states of america" & city == "nicholas" & admin_name == "GA" ~ "nicholasville",
+                          country == "united states of america" & city == "hanover county" & admin_name == "VA" ~ "hanover",
+                          country == "united states of america" & city == "harqua hala" & admin_name == "AZ" ~ "harqua",
+                          country == "united states of america" & city == "washington county" & admin_name == "MN" ~ "woodbury",
+                          country == "united states of america" & city == "burton" & admin_name == "GA" ~ "tiger",
+                          country == "united states of america" & city == "renner" & admin_name == "TX" ~ "dallas",
+                          country == "united states of america" & city == "south park" & admin_name == "PA" ~ "pittsburgh",
+                          country == "united states of america" & city == "west troy" & admin_name == "NY" ~ "troy",
+                          country == "united states of america" & city == "westchester county" & admin_name == "NY" ~ "white plains",
+                          country == "united states of america" & city == "monkton" & admin_name == "VT" ~ "monkton boro",
+                          country == "united states of america" & city == "lancaster county" & admin_name == "PA" ~ "lancaster",
+                          country == "united states of america" & city == "stirling" & admin_name == "IL" ~ "sterling",
+                          country == "united states of america" & city == "fort lewis" & admin_name == "WA" ~ "tacoma",
+                          country == "united states of america" & city == "woodbury county" & admin_name == "IA" ~ "sioux city",
+                          country == "united states of america" & city == "marion county" & admin_name == "SC" ~ "marion",
+                          country == "united states of america" & city == "north girard" & admin_name == "PA" ~ "girard",
+                          country == "united states of america" & city == "acorn" & admin_name == "MO" ~ "acorn ridge",
+                          country == "united states of america" & city == "du bois" & admin_name == "ID" ~ "dubois",
+                          country == "united states of america" & city == "paris hill" & admin_name == "ME" ~ "paris",
+                          country == "united states of america" & city == "bluffdale" & admin_name == "TX" ~ "bluff dale",
+                          country == "united states of america" & city == "ellsworth air force base" & admin_name == "SD" ~ "rapid city",
+                          country == "united states of america" & city == "carroll county" & admin_name == "MD" ~ "westminster",
+                          country == "united states of america" & city == "centre valley" & admin_name == "PA" ~ "coopersburg",
+                          country == "united states of america" & city == "phillippi" & admin_name == "WV" ~ "philippi",
+                          country == "united states of america" & city == "menomonee" & admin_name == "WI" ~ "menomonie",
+                          country == "united states of america" & city == "east highland" & admin_name == "CA" ~ "highland",
+                          country == "united states of america" & city == "milbury" & admin_name == "MA" ~ "millbury",
+                          country == "united states of america" & city == "pomona valley" & admin_name == "CA" ~ "san dimas",
+                          country == "united states of america" & city == "waterford" & admin_name == "CT" ~ "quaker hill",
+                          country == "united states of america" & city == "belmont" & admin_name == "OK" ~ "meeker",
+                          country == "united states of america" & city == "quorn" & admin_name == "IA" ~ "kingsley",
+                          country == "united states of america" & city == "daisy station" & admin_name == "NC" ~ "winston salem",
+                          country == "united states of america" & city == "grover" & admin_name == "WI" ~ "harmony",
+                          country == "united states of america" & city == "allegheny" & admin_name == "PA" ~ "pittsburgh",
+                          country == "united states of america" & city == "catchings" & admin_name == "MS" ~ "rolling fork",
+                          country == "united states of america" & city == "greene county" & admin_name == "PA" ~ "waynesburg",
+                          country == "united states of america" & city == "parke county" & admin_name == "IN" ~ "rockville",
+                          country == "united states of america" & city == "saccarappa" & admin_name == "ME" ~ "westbrook",
+                          country == "united states of america" & city == "east tallassee" & admin_name == "AL" ~ "tallassee",
+                          country == "united states of america" & city == "windham county" & admin_name == "CT" ~ "windham",
+                          country == "united states of america" & city == "fort rucker" & admin_name == "AL" ~ "ozark",
+                          country == "united states of america" & city == "spring valley twp." & admin_name == "WI" ~ "spring valley",
+                          country == "united states of america" & city == "clear creek" & admin_name == "MO" ~ "harriston",
+                          country == "united states of america" & city == "mineral" & admin_name == "KS" ~ "west mineral",
+                          country == "united states of america" & city == "mount olive" & admin_name == "PA" ~ "pittsburgh",
+                          country == "united states of america" & city == "alberton" & admin_name == "MD" ~ "daniels",
+                          country == "united states of america" & city == "gibson" & admin_name == "IL" ~ "gibson city",
+                          country == "united states of america" & city == "gibson" & admin_name == "IL" ~ "vestaburg",
+                          country == "united states of america" & city == "ferris center" & admin_name == "MI" ~ "stanton",
+                          country == "united states of america" & city == "saint louis county" & admin_name == "MO" ~ "clayton",
+                          country == "united states of america" & city == "montville" & admin_name == "CT" ~ "chesterfield",
+                          country == "united states of america" & city == "kahaku" & admin_name == "HI" ~ "kahakuloa",
+                          country == "united states of america" & city == "duquoin" & admin_name == "IL" ~ "du quoin",
+                          country == "united states of america" & city == "palmyra" & admin_name == "KS" ~ "lawrence",
+                          country == "united states of america" & city == "goose creek" & admin_name == "TX" ~ "baytown",
+                          country == "united states of america" & city == "niles" & admin_name == "CA" ~ "fremont",
+                          country == "united states of america" & city == "audobon" & admin_name == "PA" ~ "audubon",
+                          country == "united states of america" & city == "plattsburg" & admin_name == "NY" ~ "plattsburgh",
+                          country == "united states of america" & city == "douglasville" & admin_name == "TX" ~ "douglassville",
+                          country == "united states of america" & city == "wright patterson afb" & admin_name == "OH" ~ "dayton",
+                          country == "united states of america" & city == "salt lake county" & admin_name == "UT" ~ "salt lake city",
+                          country == "united states of america" & city == "taylortown" & admin_name == "PA" ~ "taylorstown",
+                          country == "united states of america" & city == "east mauch chunk" & admin_name == "PA" ~ "jim thorpe",
+                          country == "united states of america" & city == "varina" & admin_name == "NC" ~ "fuquay varina",
+                          country == "united states of america" & city == "thomas county" & admin_name == "GA" ~ "thomasville",
+                          country == "united states of america" & city == "bell station" & admin_name == "CA" ~ "san felipe",
+                          country == "united states of america" & city == "wakeshma" & admin_name == "MI" ~ "kalamazoo",
+                          country == "united states of america" & city == "pardo" & admin_name == "PA" ~ "pittsburgh",
+                          country == "united states of america" & city == "buncombe county" & admin_name == "NC" ~ "asheville",
+                          country == "united states of america" & city == "pickens county" & admin_name == "SC" ~ "pickens",
+                          country == "united states of america" & city == "new brookfield" & admin_name == "SC" ~ "west columbia",
+                          country == "united states of america" & city == "lowndes county" & admin_name == "MS" ~ "columbus",
+                          country == "united states of america" & city == "alamance county" & admin_name == "NC" ~ "graham",
+                          country == "united states of america" & city == "carter county" & admin_name == "MO" ~ "van buren",
+                          country == "united states of america" & city == "tucapau" & admin_name == "SC" ~ "spartanburg",
+                          country == "united states of america" & city == "georgetown" & admin_name == "OK" ~ "oklahoma city",
+                          country == "united states of america" & city == "weir city" & admin_name == "KS" ~ "weir",
+                          country == "united states of america" & city == "turbot" & admin_name == "PA" ~ "turbotville",
+                          country == "united states of america" & city == "amelia" & admin_name == "VA" ~ "amelia court house",
+                          country == "united states of america" & city == "south dedham" & admin_name == "MA" ~ "dedham",
+                          country == "united states of america" & city == "santa rita" & admin_name == "NM" ~ "silver city",
+                          country == "united states of america" & city == "argo" & admin_name == "IL" ~ "summit",
+                          country == "united states of america" & city == "cherry point" & admin_name == "NC" ~ "havelock",
+                          country == "united states of america" & city == "new berlin" & admin_name == "OH" ~ "berlin",
+                          country == "united states of america" & city == "plum creek" & admin_name == "NE" ~ "david city",
+                          country == "united states of america" & city == "lincoln" & admin_name == "RI" ~ "manville",
+                          country == "united states of america" & city == "bennsville" & admin_name == "MS" ~ "binnsville",
+                          country == "united states of america" & city == "orange county" & admin_name == "CA" ~ "santa ana",
+                          country == "united states of america" & city == "matteawan" & admin_name == "NY" ~ "beacon",
+                          country == "united states of america" & city == "gaston county" & admin_name == "NC" ~ "gastonia",
+                          country == "united states of america" & city == "beaver county" & admin_name == "PA" ~ "beaver",
+                          country == "united states of america" & city == "whiteman afb" & admin_name == "MO" ~ "knob noster",
+                          country == "united states of america" & city == "mauch chunk" & admin_name == "PA" ~ "jim thorpe",
+                          country == "united states of america" & city == "clarksburg" & admin_name == "MA" ~ "pittsfield",
+                          country == "united states of america" & city == "south kingstown" & admin_name == "RI" ~ "kingston",
+                          country == "united states of america" & city == "big river" & admin_name == "MO" ~ "cedar hill",
+                          country == "united states of america" & city == "plymouth county" & admin_name == "IA" ~ "le mars",
+                          country == "united states of america" & city == "van vorst" & admin_name == "NJ" ~ "jersey city",
+                          country == "united states of america" & city == "wawawai" & admin_name == "WA" ~ "colfax",
+                          country == "united states of america" & city == "guy's mills" & admin_name == "PA" ~ "guys mills",
+                          country == "united states of america" & city == "canal dover" & admin_name == "OH" ~ "dover",
+                          country == "united states of america" & city == "pittsburgh" & admin_name == "TX" ~ "pittsburg",
+                          country == "united states of america" & city == "baltimore county" & admin_name == "MD" ~ "towson",
+                          country == "united states of america" & city == "north powell" & admin_name == "VT" ~ "north pownal",
+                          country == "united states of america" & city == "angel's camp" & admin_name == "CA" ~ "angels camp",
+                          country == "united states of america" & city == "napa county" & admin_name == "CA" ~ "napa",
+                          country == "united states of america" & city == "hawthorne township" & admin_name == "IL" ~ "carmi",
+                          country == "united states of america" & city == "phiadelphia" & admin_name == "PA" ~ "philadelphia",
+                          country == "united states of america" & city == "shawmut" & admin_name == "AL" ~ "valley",
+                          country == "united states of america" & city == "williamsburg county" & admin_name == "SC" ~ "kingstree",
+                          country == "united states of america" & city == "sacramento county" & admin_name == "CA" ~ "sacramento",
+                          country == "united states of america" & city == "garrard county" & admin_name == "KY" ~ "lancaster",
+                          country == "united states of america" & city == "lead mine" & admin_name == "MO" ~ "leadmine",
+                          country == "united states of america" & city == "wilmar" & admin_name == "CA" ~ "rosemead",
+                          country == "united states of america" & city == "randolph" & admin_name == "NJ" ~ "morristown",
+                          country == "united states of america" & city == "cumru township" & admin_name == "PA" ~ "angelica",
+                          country == "united states of america" & city == "powhatan court house" & admin_name == "VA" ~ "powhatan",
+                          country == "united states of america" & city == "great lakes" & admin_name == "IL" ~ "north chicago",
+                          country == "united states of america" & city == "dewitt" & admin_name == "IA" ~ "de witt",
+                          country == "united states of america" & city == "jackson county" & admin_name == "IN" ~ "brownstown",
+                          country == "united states of america" & city == "slater" & admin_name == "WV" ~ "beckley",
+                          country == "united states of america" & city == "portsmouth" & admin_name == "MD" ~ "baltimore",
+                          country == "united states of america" & city == "brown's mill" & admin_name == "PA" ~ "browns mill",
+                          country == "united states of america" & city == "dutchess county" & admin_name == "NY" ~ "poughkeepsie",
+                          country == "united states of america" & city == "north tarrytown" & admin_name == "NY" ~ "tarrytown",
+                          country == "united states of america" & city == "argenta" & admin_name == "AR" ~ "north little rock",
+                          country == "united states of america" & city == "allegheny city" & admin_name == "PA" ~ "pittsburgh",
+                          country == "united states of america" & city == "greene county" & admin_name == "AL" ~ "eutaw",
+                          country == "united states of america" & city == "caney springs" & admin_name == "TN" ~ "caney spring",
+                          country == "united states of america" & city == "william penn" & admin_name == "PA" ~ "harrisburg",
+                          country == "united states of america" & city == "fort belvoir" & admin_name == "VA" ~ "fairfax",
+                          country == "united states of america" & city == "dallas" & admin_name == "MI" ~ "fowler",
+                          country == "united states of america" & city == "jefferson county" & admin_name == "KY" ~ "louisville",
+                          country == "united states of america" & city == "fort sullivan" & admin_name == "TX" ~ "port sullivan",
+                          country == "united states of america" & city == "fort monroe" & admin_name == "VA" ~ "hampton",
+                          country == "united states of america" & city == "booneville" & admin_name == "IN" ~ "boonville",
+                          country == "united states of america" & city == "saint wendelin" & admin_name == "OH" ~ "wendelin",
+                          country == "united states of america" & city == "langdale" & admin_name == "AL" ~ "valley",
+                          country == "united states of america" & city == "taylor county" & admin_name == "WV" ~ "grafton",
+                          country == "united states of america" & city == "toddspoint" & admin_name == "KY" ~ "todds point",
+                          country == "united states of america" & city == "walhalia" & admin_name == "SC" ~ "walhalla",
+                          country == "united states of america" & city == "blocton" & admin_name == "AL" ~ "west blocton",
+                          country == "united states of america" & city == "milligan college" & admin_name == "TN" ~ "milligan",
+                          country == "united states of america" & city == "scott afb" & admin_name == "IL" ~ "belleville",
+                          country == "united states of america" & city == "elanora" & admin_name == "PA" ~ "harrisburg",
+                          country == "united states of america" & city == "hill city" & admin_name == "TN" ~ "hill",
+                          country == "united states of america" & city == "oaklawn" & admin_name == "IL" ~ "oak lawn",
+                          country == "united states of america" & city == "mathews" & admin_name == "AL" ~ "matthews",
+                          country == "united states of america" & city == "ware station" & admin_name == "IL" ~ "ware",
+                          country == "united states of america" & city == "moragnette" & admin_name == "WV" ~ "fayetteville",
+                          country == "united states of america" & city == "defuniak springs" & admin_name == "FL" ~ "de funiak springs",
+                          country == "united states of america" & city == "flat" & admin_name == "OH" ~ "portsmouth",
+                          country == "united states of america" & city == "coffee" & admin_name == "AL" ~ "coffeeville",
+                          country == "united states of america" & city == "spencer county" & admin_name == "KY" ~ "taylorsville",
+                          country == "united states of america" & city == "deberry" & admin_name == "TX" ~ "de berry",
+                          country == "united states of america" & city == "delancey" & admin_name == "PA" ~ "adrian mines",
+                          country == "united states of america" & city == "van wert county" & admin_name == "OH" ~ "van wert",
+                          country == "united states of america" & city == "catherine" & admin_name == "KS" ~ "catharine",
+                          country == "united states of america" & city == "schuykill" & admin_name == "PA" ~ "schuylkill haven",
+                          country == "united states of america" & city == "appanoose county" & admin_name == "IA" ~ "centerville",
+                          country == "united states of america" & city == "washington depot" & admin_name == "CT" ~ "washington",
+                          country == "united states of america" & city == "upper chanceford" & admin_name == "PA" ~ "york",
+                          country == "united states of america" & city == "plum" & admin_name == "WV" ~ "plum run",
+                          country == "united states of america" & city == "erie county" & admin_name == "OH" ~ "sandusky",
+                          country == "united states of america" & city == "east port chester" & admin_name == "CT" ~ "fairfield",
+                          country == "united states of america" & city == "indian island" & admin_name == "ME" ~ "penobscot",
+                          country == "united states of america" & city == "pike county" & admin_name == "OH" ~ "waverly",
+                          country == "united states of america" & city == "south scituate" & admin_name == "RI" ~ "north scituate",
+                          country == "united states of america" & city == "hunterdon county" & admin_name == "NJ" ~ "flemington",
+                          country == "united states of america" & city == "holt county" & admin_name == "NE" ~ "o'neill",
+                          country == "united states of america" & city == "bluebell" & admin_name == "PA" ~ "blue bell",
+                          country == "united states of america" & city == "ralls county" & admin_name == "MO" ~ "new london",
+                          country == "united states of america" & city == "cranes mills" & admin_name == "TX" ~ "cranes mill",
+                          country == "united states of america" & city == "cadwallader" & admin_name == "OH" ~ "west chester",
+                          country == "united states of america" & city == "warrick county" & admin_name == "IN" ~ "boonville",
+                          country == "united states of america" & city == "lash" & admin_name == "PA" ~ "harrisburg",
+                          country == "united states of america" & city == "sampson city" & admin_name == "FL" ~ "sampson",
+                          country == "united states of america" & city == "glade springs" & admin_name == "VA" ~ "glade spring",
+                          country == "united states of america" & city == "moore township" & admin_name == "PA" ~ "bethlehem",
+                          country == "united states of america" & city == "lafayette hills" & admin_name == "PA" ~ "lafayette",
+                          country == "united states of america" & city == "greenup county" & admin_name == "KY" ~ "greenup",
+                          country == "united states of america" & city == "athlone" & admin_name == "NC" ~ "burnsville",
+                          country == "united states of america" & city == "la canada" & admin_name == "CA" ~ "la canada flintridge",
+                          country == "united states of america" & city == "custer" & admin_name == "OK" ~ "custer city",
+                          country == "united states of america" & city == "linoleumville" & admin_name == "NY" ~ "staten island",
+                          country == "united states of america" & city == "lasalle county" & admin_name == "IL" ~ "ottawa",
+                          country == "united states of america" & city == "manakin sabot" & admin_name == "VA" ~ "manakin",
+                          country == "united states of america" & city == "corinth" & admin_name == "VT" ~ "corinth corners",
+                          country == "united states of america" & city == "jessup" & admin_name == "IA" ~ "jesup",
+                          country == "united states of america" & city == "dekalb" & admin_name == "TX" ~ "de kalb",
+                          country == "united states of america" & city == "berlin" & admin_name == "MI" ~ "berlin center",
+                          country == "united states of america" & city == "park view" & admin_name == "NM" ~ "los ojos",
+                          country == "united states of america" & city == "belzonia" & admin_name == "MS" ~ "belzoni",
+                          country == "united states of america" & city == "freestone county" & admin_name == "TX" ~ "fairfield",
+                          country == "united states of america" & city == "carroll county" & admin_name == "OH" ~ "carrollton",
+                          country == "united states of america" & city == "obion county" & admin_name == "TN" ~ "union city",
+                          country == "united states of america" & city == "white county" & admin_name == "TN" ~ "sparta",
+                          country == "united states of america" & city == "tuxedo" & admin_name == "NY" ~ "tuxedo park",
+                          country == "united states of america" & city == "moss creek" & admin_name == "PA" ~ "northern cambria",
+                          country == "united states of america" & city == "rosedale" & admin_name == "KS" ~ "kansas city",
+                          country == "united states of america" & city == "buckville" & admin_name == "AR" ~ "hot springs",
+                          country == "united states of america" & city == "valhermosa springs" & admin_name == "AL" ~ "valhermoso springs",
+                          country == "united states of america" & city == "cumberland gap" & admin_name == "TN" ~ "cumberland city",
+                          country == "united states of america" & city == "willisville" & admin_name == "TN" ~ "willis",
+                          country == "united states of america" & city == "cecil county" & admin_name == "MD" ~ "elkton",
+                          country == "united states of america" & city == "jefferson county" & admin_name == "AL" ~ "birmingham",
+                          country == "united states of america" & city == "east fork" & admin_name == "KY" ~ "west fork",
+                          country == "united states of america" & city == "keyser" & admin_name == "NC" ~ "carthage",
+                          country == "united states of america" & city == "cosumnes" & admin_name == "CA" ~ "cosumne",
+                          country == "united states of america" & city == "high coal" & admin_name == "WV" ~ "madison",
+                          country == "united states of america" & city == "wilma" & admin_name == "AR" ~ "wilmar",
+                          country == "united states of america" & city == "woods ridge" & admin_name == "IN" ~ "dillsboro",
+                          country == "united states of america" & city == "decatur county" & admin_name == "IN" ~ "greensburg",
+                          country == "united states of america" & city == "cumberland" & admin_name == "ME" ~ "cumberland center",
+                          country == "united states of america" & city == "conenaugh" & admin_name == "PA" ~ "conemaugh",
+                          country == "united states of america" & city == "iredell county" & admin_name == "NC" ~ "statesville",
+                          country == "united states of america" & city == "horton" & admin_name == "VT" ~ "hortonville",
+                          country == "united states of america" & city == "fort hood" & admin_name == "TX" ~ "killeen",
+                          country == "united states of america" & city == "sandymount" & admin_name == "MD" ~ "finksburg",
+                          country == "united states of america" & city == "woodville" & admin_name == "OR" ~ "medford",
+                          country == "united states of america" & city == "morganette" & admin_name == "WV" ~ "fayetteville",
+                          country == "united states of america" & city == "kula" & admin_name == "HI" ~ "pukalani",
+                          country == "united states of america" & city == "brenda" & admin_name == "IA" ~ "breda",
+                          country == "united states of america" & city == "hargrove" & admin_name == "AL" ~ "mobile",
+                          country == "venezuela" & city == "santa teresa del tuy" & admin_name == "Miranda" ~ "santa teresa",
+                          country == "venezuela" & city == "libertador" & admin_name == "Distrito Federal" ~ "libertad",
+                          country == "vietnam" & city == "saigon" & is.na(admin_name) ~ "ho chi minh city", 
+                          TRUE ~ as.character(city)),
+         admin_name = case_when(country == "afghanistan" & city == "kabul" & is.na(admin_name) ~ "Kabol",
+                                country == "australia" & city == "canberra" & admin_name == "Capital Territory" ~ "Australian Capital Territory",
+                                country == "austria" & city == "traisen" & is.na(admin_name) ~ "Niederosterreich",
+                                country == "belgium" & city == "wilrijk" & admin_name == "Antwerp" ~ "Antwerpen",
+                                country == "belize" & city == "belize" & is.na(admin_name) ~ "Belize",
+                                country == "china" & city == "tientsin" & is.na(admin_name) ~ "Tianjin",
+                                country == "colombia" & city == "boca chica" & admin_name == "Bolivar" ~ "Casanare",
+                                country == "cuba" & city == "la habana" & admin_name == "La Habana" ~ "Ciudad de la Habana",
+                                country == "cuba" & city == "bauta" & is.na(admin_name) ~ "La Habana",
+                                country == "cuba" & city == "las villas" & is.na(admin_name) ~ "Granma",
+                                country == "cuba" & city == "camaguey" & is.na(admin_name) ~ "Camaguey",
+                                country == "cuba" & city == "bolondron" & is.na(admin_name) ~ "Matanzas",
+                                country == "cuba" & city == "las tunas" & is.na(admin_name) ~ "Las Tunas",
+                                country == "cuba" & city == "florida" & is.na(admin_name) ~ "Camaguey",
+                                country == "cuba" & city == "santa cruz del norte" & admin_name == "Mayabeque" ~ "La Habana",
+                                country == "cuba" & city == "pueblo nuevo" & is.na(admin_name) ~ "Matanzas",
+                                country == "cuba" & city == "colon" & is.na(admin_name) ~ "Matanzas",
+                                country == "cuba" & city == "potrerillos" & is.na(admin_name) ~ "Holguin",
+                                country == "cuba" & city == "surgidero de batabano" & admin_name == "Mayabeque" ~ "La Habana",
+                                country == "cuba" & city == "guanajay" & is.na(admin_name) ~ "La Habana",
+                                country == "cuba" & city == "marianao" & admin_name == "La Habana" ~ "Ciudad de la Habana",
+                                country == "cuba" & city == "santa clara" & is.na(admin_name) ~ "Villa Clara",
+                                country == "cuba" & city == "san jose de las lajas" & admin_name == "Mayabeque" ~ "La Habana",
+                                country == "cuba" & city == "guantanamo" & is.na(admin_name) ~ "Guantanamo",
+                                country == "cuba" & city == "abreus" & is.na(admin_name) ~ "Cienfuegos",
+                                country == "cuba" & city == "ciego de avila" & is.na(admin_name) ~ "Ciego de Avila",
+                                country == "cuba" & city == "la esperanza" & is.na(admin_name) ~ "Villa Clara",
+                                country == "cuba" & city == "guatemala" & is.na(admin_name) ~ "Holguin",
+                                country == "cuba" & city == "banes" & is.na(admin_name) ~ "Holguin",
+                                country == "cuba" & city == "cunagua" & is.na(admin_name) ~ "Ciego de Avila",
+                                country == "cuba" & city == "quivican" & is.na(admin_name) ~ "La Habana",
+                                country == "cuba" & city == "sancti spiritus" & is.na(admin_name) ~ "Sancti Spiritus",
+                                country == "cuba" & city == "guanabacoa" & admin_name == "La Habana" ~ "Ciudad de la Habana",
+                                country == "cuba" & city == "santa clara" & is.na(admin_name) ~ "Villa Clara",
+                                country == "cuba" & city == "santiago de las vegas" & admin_name == "La Habana" ~ "Ciudad de la Habana",
+                                country == "cuba" & city == "nueva gerona" & is.na(admin_name) ~ "Isla de la Juventud",
+                                country == "cuba" & city == "pinar del rio" & is.na(admin_name) ~ "Pinar del Rio",
+                                country == "cuba" & city == "cruces" & admin_name == "Las Villas" ~ "Cienfuegos",
+                                country == "cuba" & city == "cidra" & is.na(admin_name) ~ "Matanzas",
+                                country == "cuba" & city == "perico" & is.na(admin_name) ~ "Matanzas",
+                                country == "cuba" & city == "oriente" & is.na(admin_name) ~ "Santiago de Cuba",
+                                country == "cuba" & city == "ceiba del agua" & is.na(admin_name) ~ "La Habana",
+                                country == "cuba" & city == "consolacion del sur" & is.na(admin_name) ~ "Pinar del Rio",
+                                country == "cuba" & city == "velasco" & is.na(admin_name) ~ "Holguin",
+                                country == "cuba" & city == "caibarien" & is.na(admin_name) ~ "Villa Clara",
+                                country == "cuba" & city == "guines" & is.na(admin_name) ~ "La Habana",
+                                country == "cuba" & city == "central hatillo" & is.na(admin_name) ~ "Santiago de Cuba",
+                                country == "cuba" & city == "santiago de cuba" & is.na(admin_name) ~ "Santiago de Cuba",
+                                country == "cuba" & city == "victoria de las tunas" & is.na(admin_name) ~ "Las Tunas",
+                                country == "cuba" & city == "calabazar de sagua" & is.na(admin_name) ~ "Villa Clara",
+                                country == "cuba" & city == "alquizar" & is.na(admin_name) ~ "La Habana",
+                                country == "cuba" & city == "santo domingo" & is.na(admin_name) ~ "Villa Clara",
+                                country == "cuba" & city == "falcon" & admin_name == "Las Villas" ~ "Villa Clara",
+                                country == "cuba" & city == "alto songo" & is.na(admin_name) ~ "Santiago de Cuba",
+                                country == "cuba" & city == "progreso de alava" & is.na(admin_name) ~ "Matanzas",
+                                country == "cuba" & city == "regla" & is.na(admin_name) ~ "La Habana",
+                                country == "cuba" & city == "san antonio de los banos" & is.na(admin_name) ~ "La Habana",
+                                country == "czech republic" & city == "prague" & is.na(admin_name) ~ "Hlavni mesto Praha",
+                                country == "czech republic" & city == "zborov" & admin_name == "Olomouc" ~ "Jihocesky kraj",
+                                country == "czech republic" & city == "podebrady" & admin_name == "Central Bohemia" ~ "Stredocesky kraj",
+                                country == "czech republic" & city == "rybnik" & admin_name == "Plzensky" ~ "Plzensky kraj",
+                                country == "denmark" & city == "kirkerup" & is.na(admin_name) ~ "Sjelland",
+                                country == "dominican republic" & admin_name == "San Pedro de Macoris" ~ "San Pedro De Macoris",
+                                country == "dominican republic" & admin_name == "Santo Domingo" ~ "Distrito Nacional",
+                                country == "dominican republic" & city == "santa lucia" & admin_name == "Distrito Nacional" ~ "Duarte",
+                                country == "dominican republic" & admin_name == "Hermanas Mirabal" ~ "Salcedo",
+                                country == "dominican republic" & city == "santo domingo" ~ "Distrito Nacional",
+                                country == "dominican republic" & city == "villa mella" & is.na(admin_name) ~ "Distrito Nacional",
+                                country == "dominican republic" & city == "nagua" & admin_name == "Sanchez" ~ "Maria Trinidad Sanchez",
+                                country == "dominican republic" & city == "haina" & is.na(admin_name) ~ "Distrito Nacional",
+                                country == "dominican republic" & city == "sabana larga" & is.na(admin_name) ~ "Peravia",
+                                country == "dominican republic" & city == "palenque" & is.na(admin_name) ~ "San Cristobal",
+                                country == "finland" & city == "taivalkoski" & is.na(admin_name) ~ "Oulu",
+                                country == "france" & city == "bussac" & admin_name == "Nouvelle-Aquitaine" ~ "Aquitaine",
+                                country == "france" & city == "orleans" & admin_name == "Centre-Val de Loire" ~ "Centre",
+                                country == "germany" & admin_name == "Rhineland-Palatinate" ~ "Rheinland-Pfalz",
+                                country == "germany" & admin_name == "Bavaria" ~ "Bayern",
+                                country == "germany" & admin_name == "Hesse" ~ "Hessen",
+                                country == "germany" & city == "schorndorf" & is.na(admin_name) ~ "Bayern",
+                                country == "germany" & admin_name == "Saxony" ~ "Sachsen",
+                                country == "germany" & city == "koburg" & is.na(admin_name) ~ "Bayern",
+                                country == "germany" & admin_name == "North Rhine-Westphalia" ~ "Nordrhein-Westfalen",
+                                country == "germany" & admin_name == "Thuringia" ~ "Thuringen",
+                                country == "germany" & city == "paderborn" & is.na(admin_name) ~ "Nordrhein-Westfalen",
+                                country == "germany" & city == "kengen" & is.na(admin_name) ~ "Nordrhein-Westfalen",
+                                country == "germany" & admin_name == "Baden-Wurttembrg" ~ "Baden-Wurttemberg",
+                                country == "greece" & admin_name == "Dodescanese Isl." ~ "Dhodhekanisos",
+                                country == "guam" ~ "Guam",
+                                country == "indonesia" & city == "bontang" ~ "Kalimantan Timur",
+                                country == "ireland" & city == "granard" ~ "Longford",
+                                country == "ireland" & city == "cork" ~ "Cork",
+                                country == "ireland" & city == "limerick" ~ "Limerick",
+                                country == "ireland" & city == "queenstown" ~ "Cork",
+                                country == "ireland" & city == "mohill" ~ "Leitrim",
+                                country == "ireland" & city == "killorglin" ~ "Kerry",
+                                country == "ireland" & city == "milltown" ~ "Kerry",
+                                country == "ireland" & city == "cahersiveen" ~ "Kerry",
+                                country == "ireland" & city == "maam cross" ~ "Galway",
+                                country == "ireland" & city == "cappagh white" ~ "Tipperary",
+                                country == "ireland" & city == "rathroeen" ~ "Mayo",
+                                country == "italy" & city == "oleggio" & admin_name == "Novara" ~ "Piemonte",
+                                country == "italy" & city == "beano" ~ "Friuli-Venezia Giulia",
+                                country == "italy" & city == "baveno" ~ "Piemonte",
+                                country == "jamaica" & city == "kingston" ~ "Saint Andrew",
+                                country == "japan" & city == "hyuga" & admin_name == "Miyazaki" ~ "Kanagawa",
+                                country == "japan" & city == "miyakojima" ~ "Okinawa",
+                                country == "japan" & city == "okinawa" ~ "Okinawa",
+                                country == "korea, republic of (south korea)" & city == "seoul" ~ "Seoul-t'ukpyolsi",
+                                country == "korea, republic of (south korea)" & city == "yongam" ~ "Cholla-namdo",
+                                country == "korea, republic of (south korea)" & city == "incheon" ~ "Inch'on-jikhalsi",
+                                country == "korea, republic of (south korea)" & city == "jeonju" ~ "Cholla-bukto",
+                                country == "korea, republic of (south korea)" & city == "gwangju" ~ "Kwangju-jikhalsi",
+                                country == "korea, republic of (south korea)" & city == "daejeon" ~ "Taejon-jikhalsi",
+                                country == "korea, republic of (south korea)" & city == "gongju" ~ "Ch'ungch'ong-namdo",
+                                country == "korea, republic of (south korea)" & city == "busan" ~ "Pusan-jikhalsi",
+                                country == "korea, republic of (south korea)" & city == "jeongeup" ~ "Cholla-bukto",
+                                country == "lithuania" & city == "vilnius" ~ "Vilniaus Apskritis",
+                                country == "mexico" & city == "ciudad juarez" & admin_name == "Chihuahua" ~ "Mexico",
+                                country == "mexico" & admin_name == "Veracruz" ~ "Veracruz-Llave",
+                                country == "mexico" & admin_name == "Michihoacan" ~ "Michoacan de Ocampo",
+                                country == "mexico" & admin_name == "Michoacan" ~ "Michoacan de Ocampo",
+                                country == "mexico" & admin_name == "Estado de Mexico" ~ "Mexico",
+                                country == "mexico" & admin_name == "Coahuila" ~ "Coahuila de Zaragoza",
+                                country == "netherlands" & admin_name == "South Holland" ~ "Zuid-Holland",
+                                country == "netherlands" & admin_name == "North Holland" ~ "Noord-Holland",
+                                country == "netherlands" & admin_name == "North Brabant" ~ "Noord-Brabant",
+                                country == "nicaragua" & admin_name == "Atlantico Sur" ~ "Region Autonoma Atlantico Sur",
+                                country == "norway" & city == "sarpsborg" & is.na(admin_name) ~ "Ostfold",
+                                country == "norway" & city == "aamot modum" & is.na(admin_name) ~ "Buskerud",
+                                country == "norway" & city == "trondhjem" & is.na(admin_name) ~ "Sor-Trondelag",
+                                country == "panama" & admin_name == "West Panama" ~ "Panama",
+                                country == "panama" & city == "gatun" ~ "Colon",
+                                country == "panama" & city == "fort clayton" ~ "Panama",
+                                country == "panama" & city == "ancon" ~ "Panama",
+                                country == "philippines" & city == "manila" & is.na(admin_name) ~ "Manila",
+                                country == "poland" & city == "ozanna" & is.na(admin_name) ~ "Podkarpackie",
+                                country == "poland" & city == "garlino" & is.na(admin_name) ~ "Mazowieckie", 
+                                country == "poland" & city == "lublin" & is.na(admin_name) ~ "Lubelskie",
+                                country == "poland" & city == "gdansk" & admin_name == "Pomerania" ~ "Pomorskie",
+                                country == "puerto rico" ~ "Puerto Rico",
+                                country == "russia" & city == "saint petersburg" ~ "Saint Petersburg City",
+                                country == "russia" & city == "odessa" ~ "Odes'ka Oblast'",
+                                country == "russia" & city == "frank" ~ "Volgograd",
+                                country == "russia" & city == "ney norka" ~ "Volgograd",
+                                country == "saudi arabia" & city == "dammam" ~ "Ash Sharqiyah",
+                                country == "saudi arabia" & city == "dhahran" ~ "Ash Sharqiyah",
+                                country == "slovakia" & city == "stefurov" ~ "Presov",
+                                country == "south africa" & city == "johannesburg" ~ "Gauteng",
+                                country == "spain" & city == "zaragoza" ~ "Aragon",
+                                country == "sweden" & city == "karlskrona" ~ "Blekinge Lan",
+                                country == "sweden" & city == "vargarda" ~ "Vastra Gotaland",
+                                country == "sweden" & city == "jonkoping" ~ "Jonkopings Lan",
+                                country == "sweden" & city == "gustavsberg" ~ "Stockholms Lan",
+                                country == "switzerland" & city == "berne" ~ "Bern",
+                                country == "taiwan" & city == "taitung" ~ "T'ai-wan",
+                                country == "taiwan" & city == "tainan" ~ "T'ai-wan",
+                                country == "taiwan" & city == "kaohsiung" ~ "T'ai-wan",
+                                country == "taiwan" & city == "taichung" ~ "T'ai-wan",
+                                country == "taiwan" & city == "penghu" ~ "T'ai-wan",
+                                country == "taiwan" & city == "hualien" ~ "T'ai-wan",
+                                country == "taiwan" & city == "pingtung" ~ "T'ai-wan",
+                                country == "taiwan" & city == "taipei" ~ "T'ai-pei",
+                                country == "united kingdom" & city == "liverpool" ~ "Liverpool",
+                                country == "united kingdom" & city == "city and borough of salford" ~ "Salford",
+                                country == "united kingdom" & city == "aberdeen" ~ "Aberdeen City",
+                                country == "united kingdom" & city == "stepney" ~ "Tower Hamlets",
+                                country == "united kingdom" & city == "tunstall" ~ "Suffolk",
+                                country == "united kingdom" & city == "wednesbury" ~ "Sandwell",
+                                country == "united kingdom" & city == "glasgow" ~ "Glasgow City",
+                                country == "united kingdom" & city == "warrington" ~ "Warrington",
+                                country == "united kingdom" & city == "london" ~ "London, City of",
+                                country == "united kingdom" & city == "campsie" ~ "East Dunbartonshire",
+                                country == "united kingdom" & city == "burslem" ~ "Stoke-on-Trent",
+                                country == "united kingdom" & city == "oldham" ~ "Oldham",
+                                country == "united kingdom" & city == "dundee" ~ "Dundee City",
+                                country == "united kingdom" & city == "wakefield" ~ "Wakefield",
+                                country == "united kingdom" & city == "sheffield" ~ "Sheffield",
+                                country == "united kingdom" & city == "hyde" ~ "Hertford",
+                                country == "united states of america" & city == "saint thomas" & admin_name == "St. Thomas" ~ "VI",
+                                country == "united states of america" & city == "charlotte amalie" & admin_name == "St. Thomas" ~ "VI",
+                                country == "united states of america" & city == "christiansted" & admin_name == "St. Croix" ~ "VI",
+                                country == "united states of america" & city == "frederiksted" & admin_name == "St. Croix" ~ "VI",
+                                country == "united states of america" & city == "lewisburg" & admin_name == "VA" ~ "WV",
+                                country == "venezuela" & city == "aragua" & admin_name == "Aragua" ~ "Miranda",
+                                country == "venezuela" & admin_name == "Zuila" ~ "Zulia",
+                                country == "venezuela" & city == "caripito" & is.na(admin_name) ~ "Monagas",
+                                country == "venezuela" & city == "naguanagua" & is.na(admin_name) ~ "Carabobo",
+                                country == "venezuela" & city == "margarita" & admin_name == "Nueva Esparta" ~ "Miranda",
+                                country == "venezuela" & city == "san antonio de maturin" & is.na(admin_name) ~ "Monagas",
+                                country == "venezuela" & city == "libertad" & admin_name == "Distrito Federal" ~ "Miranda",
+                                country == "vietnam" & city == "ho chi minh city" & is.na(admin_name) ~ "Ho Chi Minh",
+                                TRUE ~ as.character(admin_name)),
+         country = case_when(country == "czech republic" ~ "czechia",
+                             country == "russia" & city == "odessa" ~ "ukraine",
+                             TRUE ~ as.character(country)))
+
+cities_df <- cities_df[, c(1, 2, 3, 6, 4, 5)]
+
+## add missing city data to cities dataframe
+orono <- c("canada", "orono", "ca", "ON", "43.979722", "-78.617222", "ON")
+navan <- c("canada", "navan", "ca", "ON", "45.420833", "-75.426389")
+lasalle <- c("canada", "lasalle", "ca", "ON", "42.216667", "-83.066667")
+vibank <- c("canada", "vibank", "ca", "SK", "50.333", "-103.95")
+newbury <- c("canada", "newbury", "ca", "ON", "42.683333", "-81.797222")
+duguayville <- c("canada", "duguayville", "ca", "NB", "47.605333", "-65.054306")
+portland <- c("canada", "portland", "ca", "ON", "44.698611", "-76.191389")
+anola <- c("canada", "anola", "ca", "MB", "49.885", "-96.635556")
+mathias <- c("canada", "saint mathias", "ca", "QC", "45.466667", "-73.266667")
+springfield <- c("canada", "springfield", "ca", "ON", "42.792778", "-80.936111")
+covehead <- c("canada", "covehead", "ca", "PE", "46.376", "-63.008")
+walpole <- c("canada", "walpole island", "ca", "ON", "42.55", "-82.483333")
+lowell <- c("canada", "new lowell", "ca", "ON", "44.398056", "-80.074167")
+bayfield <- c("canada", "bayfield", "ca", "NB", "46.1378", "-63.8168")
+frontenac <- c("canada", "frontenac", "ca", "ON", "44.508056", "-76.493889")
+barkerville <- c("canada", "barkerville", "ca", "BC", "53.065833", "-121.517222")
+chingacousy <- c("canada", "chingacousy", "ca", "ON", "43.753611", "-79.839444")
+oil <- c("canada", "oil springs", "ca", "ON", "42.783333", "-82.116667")
+cassburn <-  c("canada", "cassburn", "ca", "ON", "45.533333", "-74.65")
+pownal <- c("canada", "pownal", "ca", "PE", "46.283333", "-63.25")
+aira <- c("japan", "aira", "jp", "Kagoshima", "31.755278", "130.611667")
+tsushima <- c("japan", "tsushima", "jp", "Nagasaki", "34.2", "129.283333")
+mihama <- c("japan", "mihama", "jp", "Mie", "33.816667", "136.05")
+jeongeup <- c("korea, republic of (south korea)", "jeongeup", "kr", "Cholla-bukto", "35.566667", "126.85")
+staten <- c("united states of america", "staten island", "us", "NY", "40.571944", "-74.146944")
+anderson <- c("united states of america", "anderson island", "us", "WA", "47.16", "-122.71")
+knox <- c("united states of america", "fort knox", "us", "KY", "37.92", "-85.96")
+queens <- c("united states of america", "queens", "us", "NY", "40.75", "-73.866667")
+greenbrae <- c("united states of america", "greenbrae", "us", "CA", "37.948611", "-122.524722")
+thomas <- c("united states of america", "saint thomas", "us", "VI", "18.333333", "-64.916667")
+christiansted <- c("united states of america", "christiansted", "us", "VI", "17.75", "-64.75")
+frederiksted <- c("united states of america", "frederiksted", "us", "VI", "17.711667", "-64.881944")
+amalie <- c("united states of america", "charlotte amalie", "us", "VI", "18.35", "-64.95")
+taylor <- c("united states of america", "taylor", "us", "WA", "47.418889", "-121.90555")
+bragg <- c("united states of america", "fort bragg", "us", "NC", "35.139167", "-78.999167")
+
+cities_df <- rbind(cities_df, orono, navan, lasalle, vibank, newbury, duguayville, portland, anola, mathias, springfield, covehead, walpole, lowell, bayfield, frontenac, barkerville, chingacousy, oil, cassburn, pownal, aira, tsushima, mihama, jeongeup, staten, anderson, knox, queens, greenbrae, thomas, christiansted, frederiksted, amalie, taylor, bragg)
+
+
+
+player_cities <- left_join(players_df, cities_df, by = c("city", "country", "admin_name"))
+lat_NA <- filter_NA(player_cities, "country", "city", "admin_name", column = "lat")
+```
+
+
+```{r city counts, echo = FALSE, message = FALSE, warning = FALSE}
+## create a count of the number of times a city value occurs
+city_counts <- count(player_cities, city, admin_name, country) %>% 
+  rename(count = n)
+
+## join city count to player cities dataframe and remove duplicate values
+player_cities <- left_join(player_cities, city_counts, by = c("city", "admin_name", "country")) %>% 
+  unique()
+
+player_cities <- player_cities %>% 
+  mutate(false_count = 1)
+```
+
+
+```{r spatial, echo=FALSE, message=FALSE, warning=FALSE}
+## convert latitude and longitude points to spatial
+player_cities <- st_as_sf(player_cities, coords = c("lng", "lat"), crs = 3857)
+```
+
+
+```{r map1, echo = FALSE, message = FALSE, warning = FALSE, fig.height = 12, fig.width = 18}
+## create map graphic using tmap package and spData package
+## set bottom layer to World map from spData package
+m1 <- tm_shape(world)+
+  ## set shapes to polygons and border alpha to 1
+  tm_polygons(border.alpha = 1,
+              ## set border color
+              border.col = "white",
+              ## set polygon fill to white
+              col = "black")+
+  ## set second layer shape to cities
+  tm_shape(player_cities)+
+  ## set second layer shapes to dots using false_count
+  tm_dots("false_count",
+          ## set size to count column values
+          size = "count",
+          ## set the alpha to 1, .eps file types do not read transparency
+          alpha = 1,
+          ## set colour, this can be kept as is or changed in Illustrator
+          col = "dodgerblue",
+          ## set alpha of shape border to 0, can be changed if a border is wanted
+          border.alpha = 0)+
+  ## set map layout elements
+  ## remove map frame
+  tm_layout(frame = FALSE,
+            ## set aspect ratio to 0
+            asp = 0,
+            ## tell legend not to show
+            legend.show = FALSE,
+            ## set map background to white, can be changed in Illustrator
+            bg.color = "white")
+## show graphic
+m1
+```
+
+```{r save maps, echo = FALSE, message = FALSE, warning = FALS}
+## set save output to .eps filetype
+tmap_options(output.format = "eps")
+
+## save map graphic to graphics folder using 'here' function, set aspect ratio to 1440p
+tmap_save(tm = m1, filename = here("/graphics/map1.eps"), width = 2560, height = 1440, asp = 0)
+```
