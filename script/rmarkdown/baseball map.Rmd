@@ -16,7 +16,8 @@ knitr::opts_chunk$set(echo = TRUE)
 #install.packages("here")         ## uncomment to install here package for working with directories
 #install.packages("sf")           ## uncomment to install sf package for working with spatial coordinates
 #install.packages("tmap")         ## uncomment to install tmap package for mapping
-#install.packages("spData")       ## uncomment to install spData for World map (and other maps)
+#install.packages("tmaptools")    ## uncomment to install tmaptools for some extra mapping tools
+
 ```
 
 
@@ -26,7 +27,7 @@ library(tidyverse)              ## load tidyverse library
 library(here)                   ## improves efficiency of working with directories
 library(sf)                     ## assists in working with geo data
 library(tmap)                   ## for building maps
-library(spData)                 ## provides World map
+library(tmaptools)              ## for some extra mapping tools
 ```
 
 
@@ -975,49 +976,58 @@ player_cities <- player_cities %>%
 
 ```{r spatial, echo=FALSE, message=FALSE, warning=FALSE}
 ## convert latitude and longitude points to spatial
-player_cities <- st_as_sf(player_cities, coords = c("lng", "lat"), crs = 3857)
+player_cities <- st_as_sf(player_cities, coords = c("lng", "lat"))
 ```
 
+```{r world map, echo=FALSE, message=FALSE, warning=FALSE}
+## load world map data
+#data(World)
+
+## set map project to Gall Peters
+world_map <- st_transform(world, "+proj=gall")
+
+## check projection of map
+get_projection(world_map)
+```
 
 ```{r map1, echo = FALSE, message = FALSE, warning = FALSE, fig.height = 12, fig.width = 18}
 ## create map graphic using tmap package and spData package
 ## set bottom layer to World map from spData package
-m1 <- tm_shape(world)+
+m1 <- tm_shape(world_map)+
   ## set shapes to polygons and border alpha to 1
-  tm_polygons(border.alpha = 1,
+  tm_polygons(border.alpha = 0,
               ## set border color
-              border.col = "white",
+              border.col = "black",
               ## set polygon fill to white
-              col = "black")+
+              col = "grey")+
   ## set second layer shape to cities
   tm_shape(player_cities)+
   ## set second layer shapes to dots using false_count
-  tm_dots("false_count",
-          ## set size to count column values
-          size = "count",
+    tm_dots("count",
           ## set the alpha to 1, .eps file types do not read transparency
           alpha = 1,
           ## set colour, this can be kept as is or changed in Illustrator
-          col = "dodgerblue",
+          col = "black",
           ## set alpha of shape border to 0, can be changed if a border is wanted
           border.alpha = 0)+
   ## set map layout elements
   ## remove map frame
-  tm_layout(frame = FALSE,
+    tm_layout(frame = FALSE,
             ## set aspect ratio to 0
             asp = 0,
             ## tell legend not to show
             legend.show = FALSE,
             ## set map background to white, can be changed in Illustrator
             bg.color = "white")
+
 ## show graphic
 m1
 ```
 
 ```{r save maps, echo = FALSE, message = FALSE, warning = FALS}
-## set save output to .eps filetype
+==## set save output to .eps filetype
 tmap_options(output.format = "eps")
 
 ## save map graphic to graphics folder using 'here' function, set aspect ratio to 1440p
-tmap_save(tm = m1, filename = here("/graphics/map1.eps"), width = 2560, height = 1440, asp = 0)
+tmap_save(tm = m1, filename = here("/graphics/map.eps"), width = 2560, height = 1440, asp = 0)
 ```
