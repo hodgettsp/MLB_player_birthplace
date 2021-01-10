@@ -1024,7 +1024,7 @@ m1 <- tm_shape(world_map)+
 m1
 ```
 
-```{r save maps, echo = FALSE, message = FALSE, warning = FALS}
+```{r save maps, echo = FALSE, message = FALSE, warning = FALSE}
 ==## set save output to .eps filetype
 tmap_options(output.format = "eps")
 
